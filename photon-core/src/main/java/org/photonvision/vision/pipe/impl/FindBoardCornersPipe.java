@@ -390,14 +390,14 @@ public class FindBoardCornersPipe
         if (!boardFound) {
             objectPoints.release();
             imagePoints.release();
-            if (ids != null)
-                ids.release();
+            if (ids != null) ids.release();
             // If we can't find a calibration board, give up
             return null;
         }
 
         // enforce preconditions
-        if (imagePoints.total() != objectPoints.total() || (ids != null && imagePoints.total() != ids.total())) {
+        if (imagePoints.total() != objectPoints.total()
+                || (ids != null && imagePoints.total() != ids.total())) {
             logger.error(
                     "Output image points, object points, and corner ids must all be the same size. Got image points of size "
                             + imagePoints.size()
