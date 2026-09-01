@@ -27,40 +27,41 @@ import java.awt.GraphicsEnvironment;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.util.List;
-import java.util.function.IntUnaryOperator;
+import java.util.function.IntFunction;
 import javax.swing.BoxLayout;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.Timer;
 import org.junit.jupiter.api.Test;
-import org.photonvision.common.hardware.statusLED.LinearPattern;
+import org.photonvision.common.hardware.statusLED.PixelPatternBuilder;
+import org.photonvision.common.hardware.statusLED.PixelPatternBuilder.PixelData;
 import org.wpilib.math.util.Pair;
 
-public class LinearPatternTest {
-    LinearPattern pattern = new LinearPattern(11);
+public class PixelPatternTest {
+    PixelPatternBuilder patternBuilder = new PixelPatternBuilder(11);
 
-    static class PatternPanel extends JPanel implements ActionListener {
+    class PatternPanel extends JPanel implements ActionListener {
         final int pixelSize = 20;
-        final int baseColor;
-        final LinearPattern pattern;
-        final IntUnaryOperator patternType;
+        final Iterable<PixelData> pattern;
 
-        public PatternPanel(int baseColor, LinearPattern pattern, IntUnaryOperator patternType) {
-            this.baseColor = baseColor;
+        public PatternPanel(Iterable<PixelData> pattern) {
             this.pattern = pattern;
-            this.patternType = patternType;
 
-            this.setPreferredSize(new Dimension(pixelSize * pattern.numPixels, pixelSize));
+            this.setPreferredSize(new Dimension(pixelSize * patternBuilder.numPixels, pixelSize));
 
             new Timer(16, this).start();
         }
 
         @Override
         protected void paintComponent(Graphics g) {
-            for (pattern.pixel = 0; pattern.pixel < pattern.numPixels; pattern.pixel++) {
-                g.setColor(new Color(patternType.applyAsInt(baseColor)));
-                g.fillRect(pixelSize * (pattern.numPixels - pattern.pixel - 1), 0, pixelSize, pixelSize);
+            for (var pixel : pattern) {
+                if (pixel.position() >= patternBuilder.numPixels) {
+                    throw new ArrayIndexOutOfBoundsException(pixel.position());
+                }
+                g.setColor(new Color(pixel.color()));
+                g.fillRect(
+                        pixelSize * (patternBuilder.numPixels - 1 - pixel.position()), 0, pixelSize, pixelSize);
             }
         }
 
@@ -76,18 +77,24 @@ public class LinearPatternTest {
     void patternDemonstration() {
         assumeFalse(GraphicsEnvironment.isHeadless());
 
-        final List<Pair<String, IntUnaryOperator>> allPatterns =
+        final List<Pair<String, IntFunction<Iterable<PixelData>>>> allPatterns =
                 List.of(
-                        Pair.of("Blink", pattern::blink),
-                        Pair.of("Double Blink", pattern::doubleBlink),
-                        Pair.of("Throb", pattern::throb),
-                        Pair.of("Phaser", pattern::phaser),
-                        Pair.of("Converge", pattern::converge),
-                        Pair.of("Diverge", pattern::diverge),
-                        Pair.of("Slide Left", pattern::leftSlide),
-                        Pair.of("Slide Right", pattern::rightSlide),
-                        Pair.of("Hook Left", pattern::leftHook),
-                        Pair.of("Hook Right", pattern::rightHook));
+                        Pair.of("Blink", patternBuilder::blink),
+                        Pair.of("Double Blink", patternBuilder::doubleBlink),
+                        Pair.of("Throb", patternBuilder::throb),
+                        Pair.of("Phaser", patternBuilder::phaser),
+                        Pair.of("Converge", patternBuilder::converge),
+                        Pair.of("Diverge", patternBuilder::diverge),
+                        Pair.of("Slide Left", patternBuilder::slideLeft),
+                        Pair.of("Slide Right", patternBuilder::slideRight),
+                        Pair.of("Rotate Left", patternBuilder::rotateLeft),
+                        Pair.of("Rotate Right", patternBuilder::rotateRight),
+                        Pair.of(
+                                "Wrapped Phaser",
+                                (int innerColor) ->
+                                        patternBuilder
+                                                .phaser(innerColor)
+                                                .wrappedBy(patternBuilder.doubleBlink(0xFFFFFF))));
 
         var frame = new JFrame("Linear Pattern Demonstration");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -98,7 +105,7 @@ public class LinearPatternTest {
         for (var patternPair : allPatterns) {
             JPanel panel =
                     new PatternPanel(
-                            PixelColour.wheel(255 * i++ / allPatterns.size()), pattern, patternPair.getSecond());
+                            patternPair.getSecond().apply(PixelColour.wheel(255 * i++ / allPatterns.size())));
             panel.add(new JLabel(patternPair.getFirst()));
             frame.add(panel);
         }

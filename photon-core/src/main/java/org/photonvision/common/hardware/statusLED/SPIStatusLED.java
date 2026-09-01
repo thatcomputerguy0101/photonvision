@@ -56,7 +56,7 @@ public class SPIStatusLED implements StatusLED {
     }
 
     Apa102LedDriver ledChain;
-    protected LinearPattern pattern;
+    protected PixelPatternBuilder pattern;
 
     protected PhotonStatus status = PhotonStatus.GENERIC_ERROR;
 
@@ -67,7 +67,7 @@ public class SPIStatusLED implements StatusLED {
             int numLeds,
             int brightness) {
         ledChain = new Apa102LedDriver(spiBus, chipSelect, 2_000_000, numLeds, brightness);
-        pattern = new LinearPattern(numLeds);
+        pattern = new PixelPatternBuilder(numLeds);
 
         TimedTaskManager.getInstance().addTask("StatusLEDUpdate", this::updateLED, 15);
     }
@@ -78,27 +78,17 @@ public class SPIStatusLED implements StatusLED {
     }
 
     protected void updateLED() {
-        for (pattern.pixel = 0; pattern.pixel < pattern.numPixels; pattern.pixel++) {
-            switch (status) {
-                case NT_CONNECTED_TARGETS_VISIBLE, NT_DISCONNECTED_TARGETS_VISIBLE ->
-                        ledChain.setPixelColour(pattern.pixel, PixelColour.BLUE);
-                case NT_CONNECTED_TARGETS_MISSING, NT_DISCONNECTED_TARGETS_MISSING ->
-                        ledChain.setPixelColour(pattern.pixel, pattern.phaser(PixelColour.GREEN));
-                case GENERIC_ERROR ->
-                        ledChain.setPixelColour(pattern.pixel, pattern.blink(PixelColour.RED));
-            }
-        }
-
-        switch (status) {
-            case NT_DISCONNECTED_TARGETS_VISIBLE, NT_DISCONNECTED_TARGETS_MISSING:
-                var doubleBlink = pattern.doubleBlink(PixelColour.YELLOW);
-                if (doubleBlink != 0) {
-                    ledChain.setPixelColour(0, doubleBlink);
-                    ledChain.setPixelColour(pattern.numPixels - 1, doubleBlink);
-                }
-                break;
-            default:
-                break;
+        for (var pixel :
+                switch (status) {
+                    case NT_CONNECTED_TARGETS_VISIBLE -> pattern.solid(PixelColour.BLUE);
+                    case NT_DISCONNECTED_TARGETS_VISIBLE ->
+                            pattern.solid(PixelColour.BLUE).wrappedBy(pattern.doubleBlink(PixelColour.YELLOW));
+                    case NT_CONNECTED_TARGETS_MISSING -> pattern.phaser(PixelColour.GREEN);
+                    case NT_DISCONNECTED_TARGETS_MISSING ->
+                            pattern.phaser(PixelColour.GREEN).wrappedBy(pattern.doubleBlink(PixelColour.YELLOW));
+                    case GENERIC_ERROR -> pattern.blink(PixelColour.RED);
+                }) {
+            ledChain.setPixelColour(pixel.position(), pixel.color());
         }
 
         ledChain.render();
