@@ -359,7 +359,7 @@ public class CameraCalibrationCoefficients implements Releasable {
                                     var levels = new float[observation.cornersUsed.length];
 
                                     for (int corner = 0; corner < observation.cornersUsed.length; corner++) {
-                                        levels[corner] = observation.cornersUsed[corner] ? 0.0f : -1.0f;
+                                        levels[corner] = observation.cornersUsed[corner] ? 1.0f : -1.0f;
                                     }
 
                                     var ids = observation.cornerIds;
