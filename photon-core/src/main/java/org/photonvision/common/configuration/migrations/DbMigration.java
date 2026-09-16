@@ -17,17 +17,20 @@
 
 package org.photonvision.common.configuration.migrations;
 
-import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 import org.photonvision.common.logging.LogGroup;
 import org.photonvision.common.logging.Logger;
 
 import io.avaje.json.JsonException;
+import io.avaje.json.node.JsonArray;
+import io.avaje.json.node.JsonNode;
+import io.avaje.json.node.JsonObject;
+import io.avaje.jsonb.Jsonb;
 
 public class DbMigration {
     private static final Logger logger = new Logger(DbMigration.class, LogGroup.Config);
@@ -122,77 +125,76 @@ public class DbMigration {
         // Now process the collected data
         for (var cameraData : cameraDataList) {
             String uniqueName = cameraData.get("unique_name");
-            DynamicJsonEditor configJson;
+            JsonObject configJson;
 
             try {
-                configJson = new DynamicJsonEditor(cameraData.get("config_json"));
-            } catch (IOException e) {
+                configJson = Jsonb.instance().type(JsonObject.class).fromJson(cameraData.get("config_json"));
+            } catch (JsonException | UncheckedIOException e) {
                 throw new MigrationException("Cannot desearialize camera info for " + uniqueName, e);
             }
 
-            var matchedCameraInfo = configJson.getMap("matchedCameraInfo");
+            var matchedCameraInfo = (JsonObject) configJson.get("matchedCameraInfo");
 
             // migrate legacy PVCameraInfo type
             if (!matchedCameraInfo.containsKey("type")) {
-                String cameraType = matchedCameraInfo.keySet().iterator().next();
+                String cameraType = matchedCameraInfo.elements().keySet().iterator().next();
                 logger.debug(
                         String.format(
                                 "Migrating legacy %s type-wrapper for camera %s",
-                                cameraType, configJson.getString("nickname")));
+                                cameraType, configJson.get("nickname").text()));
                 String type = String.format("PVCameraInfo.%s", cameraType);
-                var cameraInfo = configJson.getMap(String.format("matchedCameraInfo.%s", cameraType));
-                matchedCameraInfo.put("type", type);
-                matchedCameraInfo.putAll(cameraInfo);
-                matchedCameraInfo.remove(cameraType);
+                var cameraInfo = (JsonObject) configJson.extractNode(String.format("matchedCameraInfo.%s", cameraType));
+                cameraInfo.add("type", type);
+                configJson.add("matchedCameraInfo", cameraInfo);
             }
 
             // Check for other_paths that haven't been migrated
-            if (!configJson.hasKey("matchedCameraInfo.otherPaths")) {
-                try (var otherPathsJson = new DynamicJsonEditor(cameraData.get("otherpaths_json"))) {
+            if (!configJson.containsKey("matchedCameraInfo.otherPaths")) {
+                try {
+                    var otherPathsJson = Jsonb.instance().type(JsonNode.class).fromJson(cameraData.get("otherpaths_json"));
                     logger.debug("Migrating legacy otherPaths");
-                    matchedCameraInfo.put("otherPaths", otherPathsJson.getList(""));
-                } catch (IOException | JsonException e) {
+                    matchedCameraInfo.add("otherPaths", otherPathsJson);
+                } catch (JsonException | UncheckedIOException e) {
                     logger.warn("Cannot deserialize otherpaths_json. Skipping.\n" + e);
                 }
             }
 
             // Migrate pipeline_jsons
             // before 2027, pipeline_jsons contained an array of strings and each string was a
-            // pipeline object
-            if (!configJson.hasKey("pipelineSettings")) {
-                try (var rawPipelineJsons = new DynamicJsonEditor(cameraData.get("pipeline_jsons"))) {
-                    List<Map<String, Object>> pipelines = new ArrayList<Map<String, Object>>();
-                    for (String pipelineString : rawPipelineJsons.getList("", String.class)) {
-                        var pipelineJson = new DynamicJsonEditor(pipelineString);
-                        var oldWrapper = pipelineJson.getList("");
-                        String type = (String) oldWrapper.get(0);
-                        @SuppressWarnings("unchecked")
-                        var pipeline = (Map<String, Object>) oldWrapper.get(1);
+            // pipeline
+            // object
+            if (!configJson.containsKey("pipelineSettings")) {
+                try {
+                    var rawPipelineJsons = Jsonb.instance().type(JsonArray.class).fromJson(cameraData.get("pipeline_jsons"));
+                    JsonArray pipelines = JsonArray.create();
+                    for (JsonNode pipelineString : rawPipelineJsons.elements()) {
+                        var pipelineJson = Jsonb.instance().type(JsonArray.class).fromJson(pipelineString.text());
+                        String type = pipelineJson.elements().get(0).text();
+                        var pipeline = (JsonObject) pipelineJson.elements().get(1);
                         logger.debug(
                                 String.format(
-                                        "Migrating legacy %s, \"%s\"", type, pipeline.get("pipelineNickname")));
-                        pipeline.put("type", type);
+                                        "Migrating legacy %s, \"%s\"", type, pipeline.extract("pipelineNickname")));
+                        pipeline.add("type", type);
                         pipelines.add(pipeline);
-                        pipelineJson.close();
                     }
-                    configJson.getMap("").put("pipelineSettings", pipelines);
-                } catch (IOException | JsonException e) {
-                    logger.warn("Cannot deserialize pipeline_jsons. Skipping.\n" + e);
+                    configJson.add("pipelineSettings", pipelines);
+                } catch (JsonException | UncheckedIOException e) {
+                    logger.warn("Couldn't deserialize pipeline_jsons. Skipping.\n" + e);
                 }
             }
 
             // Migrate drivermode_json
-            if (!configJson.hasKey("driveModeSettings")) {
-                try (var legacyDriverModeJson =
-                        new DynamicJsonEditor(cameraData.get("drivermode_json"))) {
-                    var oldWrapper = legacyDriverModeJson.getList("");
-                    String type = (String) oldWrapper.get(0);
+            if (!configJson.containsKey("driveModeSettings")) {
+                try {
+                    var legacyDriverModeJson =
+                        Jsonb.instance().type(JsonArray.class).fromJson(cameraData.get("drivermode_json"));
+
+                    String type = legacyDriverModeJson.elements().get(0).text();
                     logger.debug(String.format("Migrating legacy %s", type));
-                    @SuppressWarnings("unchecked")
-                    var pipeline = (Map<String, Object>) oldWrapper.get(1);
-                    configJson.getMap("").put("driveModeSettings", pipeline);
-                } catch (IOException | JsonException e) {
-                    logger.warn("Cannot deserialize drivermode_json. Skipping.\n" + e);
+                    var pipeline = legacyDriverModeJson.elements().get(1).text();
+                    configJson.add("driveModeSettings", pipeline);
+                } catch (JsonException | UncheckedIOException e) {
+                    logger.warn("Couldn't deserialize drivermode_json. Skipping.\n" + e);
                 }
             }
 
@@ -208,19 +210,16 @@ public class DbMigration {
                     "REPLACE INTO cameras (unique_name, config_json, drivermode_json, pipeline_jsons) VALUES (?, ?, ?, ?);";
             try (var statement = conn.prepareStatement(sqlString)) {
                 statement.setString(1, uniqueName);
-                statement.setString(2, configJson.export(false));
+                statement.setString(2, Jsonb.instance().type(JsonObject.class).toJson(configJson));
                 statement.setString(3, "null");
                 statement.setString(4, "[]");
                 statement.executeUpdate();
-            } catch (IOException e) {
-                throw new MigrationException("Cannot searialize migrated JSON to database for " + uniqueName, e);
+            } catch (JsonException | UncheckedIOException e) {
+                throw new MigrationException("Error serializing configJson", e);
             } catch (SQLException e) {
                 throw new MigrationException("Exception thrown writing migrated JSON to database for " + uniqueName, e);
-            } finally {
-                configJson.close();
             }
         }
-
         return true;
     };
 }
